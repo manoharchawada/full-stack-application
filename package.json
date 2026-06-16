@@ -15,5 +15,10 @@
   "license": "ISC",
   "devDependencies": {
     "prettier": "^3.8.4"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mongoose": "^9.7.0"
   }
 }
