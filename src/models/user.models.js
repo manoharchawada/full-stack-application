@@ -45,6 +45,10 @@ const userSchema = new mongoose.Schema(
         ref: "Video",
       },
     ],
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );
