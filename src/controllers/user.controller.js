@@ -1,7 +1,10 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiErrors.js";
 import { User } from "../models/user.models.js";
-import { uploadOnCloudinary } from "../utils/cloudinary.js";
+import {
+  deleteFromCloudinary,
+  uploadOnCloudinary,
+} from "../utils/cloudinary.js";
 import { ApiResponse } from "../utils/apiResponse.js";
 import jwt from "jsonwebtoken";
 
@@ -40,7 +43,7 @@ const registerUser = asyncHandler(async (req, res) => {
     if (
       [fullName, username, email, password].some((field) => field?.trim === " ")
     ) {
-      res.status(400).json(new ApiError(400, "All field are required!"));
+      return res.status(400).json(new ApiError(400, "All field are required!"));
     }
     const existedUser = await User.findOne({ $or: [{ email }, { username }] });
     if (existedUser) {
@@ -118,14 +121,14 @@ const loginUser = asyncHandler(async (req, res) => {
   const user = await User.findOne({ $or: [{ username }, { email }] });
   if (!user) {
     // res.status(404).json({ message: "user not found " });
-    res.status(404).json(new ApiError(404, "User not found"));
+    return res.status(404).json(new ApiError(404, "User not found"));
   }
   if (user?.deletedAt !== null) {
-    res.status(404).json(new ApiError(404, "User deleted from DB"));
+    return res.status(404).json(new ApiError(404, "User deleted from DB"));
   }
-  const isPasswordValid = user.isPasswordCorrect(password);
+  const isPasswordValid = await user.isPasswordCorrect(password);
   if (!isPasswordValid) {
-    res.status(404).json(new ApiError(404, "Invalid credentials "));
+    return res.status(404).json(new ApiError(404, "Invalid credentials "));
   }
   const { accessToken, refreshToken } =
     await generateAccessTokenAndRefreshToken(user._id);
@@ -210,7 +213,7 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
   console.log(req?.cookies?.refreshToken);
 
   if (!incomingRefreshToken) {
-    res.status(401).json(new ApiError(401, "Incoming token not found"));
+    return res.status(401).json(new ApiError(401, "Incoming token not found"));
   }
   try {
     const decodedToken = jwt.verify(
@@ -219,10 +222,10 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     );
     const user = await User.findById(decodedToken?._id);
     if (!user) {
-      res.status(401).json(new ApiError(401, "Unauthorized request"));
+      return res.status(401).json(new ApiError(401, "Unauthorized request"));
     }
     if (incomingRefreshToken !== user.refreshToken) {
-      res.status(401).json(401, "Unauthorized token");
+      return res.status(401).json(401, "Unauthorized token");
     }
     const options = {
       httpOnly: true,
@@ -246,5 +249,167 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
       .json(new ApiError(401, error?.message || "Unauthorized token"));
   }
 });
+const changeCurrentPassword = asyncHandler(async (req, res) => {
+  // take old and new password
+  // check password by custom method
+  // if password wrong then throw error
+  // if valid then assign newPassword and save
+  const { oldPassword, newPassword } = req.body;
+  const user = await User.findById(req.user._id);
+  if (user?.deletedAt !== null) {
+    return res.status(404).json(404, "Unauthorized User!");
+  }
+  const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
+  if (!isPasswordCorrect) {
+    return res.status(400).json(new ApiError(400, "Old password not correct"));
+  }
+  user.password = newPassword;
+  await user.save({ validateBeforeSave: false });
+  return res
+    .status(200)
+    .json(new ApiResponse(200, {}, "Password change successfully"));
+});
+const getProfile = asyncHandler(async (req, res) => {
+  try {
+    const userId = req.query.userId || req?.user?._id;
+    console.log(req, "=======", userId);
+    const currentUser = await User.findById(userId).select("-password");
+    if (currentUser?.deletedAt !== null) {
+      return res.status(404).json(404, "Unauthorized User!");
+    }
+    return res
+      .status(200)
+      .json(
+        new ApiResponse(200, { currentUser }, "Profile fetched successfully")
+      );
+  } catch (error) {
+    return res
+      .status(404)
+      .json(new ApiError(404, error?.message || "User not found"));
+  }
+});
+const updateUser = asyncHandler(async (req, res) => {
+  try {
+    const { fullName, email } = req.body;
+    if (!(fullName && email)) {
+      return res.status(400).json(new ApiError(400, "All field are required"));
+    }
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user?._id,
+      {
+        $set: {
+          fullName,
+          email,
+        },
+      },
+      { returnDocument: "after" }
+    ).select("-password");
+    return res
+      .status(200)
+      .json(new ApiResponse(200, updatedUser, "User updated successfully"));
+  } catch (error) {
+    return res
+      .status(400)
+      .json(new ApiError(400, error?.message || "Error while updating user"));
+  }
+});
+const updateUserAvatar = asyncHandler(async (req, res) => {
+  // pick the file from req.file
+  const avatarLocalPath = req.file;
+  if (!avatarLocalPath) {
+    return res.status(400).json(new ApiError(400, "Avatar file is required"));
+  }
+  try {
+    const avatar = await uploadOnCloudinary(avatarLocalPath?.path);
+    if (!avatar) {
+      return res
+        .status(500)
+        .json(
+          new ApiError(500, "Internal server error while uploading avatar")
+        );
+    }
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user?._id,
+      {
+        $set: {
+          avatar: avatar.url,
+        },
+      },
+      { returnDocument: "after" }
+    ).select("-password");
+    if (req.user?.avatar) {
+      await deleteFromCloudinary(req.user?.avatar);
+    }
+    if (!updatedUser) {
+      return res
+        .status(500)
+        .json(
+          new ApiError(500, "Internal server error while updating user data")
+        );
+    }
+    return res
+      .status(200)
+      .json(new ApiResponse(200, updatedUser, "Avatar updated successfully"));
+  } catch (error) {
+    return res
+      .status(400)
+      .json(new ApiError(400, error?.message || "Bad request"));
+  }
+});
+const updateCoverImage = asyncHandler(async (req, res) => {
+  // req.file
+  // check empty
+  // upload on cloudinary
+  // save in data base
+  // delete last cover image  from cloudinary
+  const coverImageLocalPath = req.file;
+  if (!coverImageLocalPath) {
+    return res.status(400).json(new ApiError(400, "Cover Image is required"));
+  }
+  try {
+    const coverImage = await uploadOnCloudinary(coverImageLocalPath?.path);
+    if (!coverImage) {
+      return res
+        .status(500)
+        .json(500, "Internal server error while uploading cover image");
+    }
+    const updatedUser = await User.findByIdAndUpdate(
+      req.user?._id,
+      {
+        $set: {
+          coverImage: coverImage?.url,
+        },
+      },
+      {
+        returnDocument: "after",
+      }
+    ).select("-password");
 
-export { registerUser, loginUser, logoutUser, deleteUser, refreshAccessToken };
+    if (req.user?.coverImage) {
+      await deleteFromCloudinary(req.user?.coverImage);
+    }
+    return res
+      .status(200)
+      .json(
+        new ApiResponse(200, updatedUser, "Cover image updated successfully")
+      );
+  } catch (error) {
+    return res
+      .status(400)
+      .json(
+        new ApiError(400, error?.message || "Error while updating cover image")
+      );
+  }
+});
+export {
+  registerUser,
+  loginUser,
+  logoutUser,
+  deleteUser,
+  refreshAccessToken,
+  changeCurrentPassword,
+  getProfile,
+  updateUser,
+  updateUserAvatar,
+  updateCoverImage,
+};
