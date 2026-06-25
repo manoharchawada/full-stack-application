@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { Playlist } from "../models/playlist.models.js";
 import { Video } from "../models/video.models.js";
 import { ApiError } from "../utils/apiErrors.js";
@@ -7,6 +8,7 @@ import {
   deleteFromCloudinary,
   uploadOnCloudinary,
 } from "../utils/cloudinary.js";
+import { VideoLike } from "../models/video.likes.models.js";
 
 const createVideo = asyncHandler(async (req, res) => {
   // get video meta from req.body
@@ -122,6 +124,77 @@ const getVideoFeed = asyncHandler(async (req, res) => {
       );
   }
 });
+const getSingleVideo = asyncHandler(async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    if (!videoId) {
+      return res.status(400).json(new ApiResponse(400, "VideoId is required"));
+    }
+    const videoData = await Video.aggregate([
+      {
+        $match: {
+          _id: new mongoose.Types.ObjectId(videoId),
+        },
+      },
+      {
+        $lookup: {
+          from: "videolikes",
+          let: {
+            videoId: "$_id",
+          },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    {
+                      $eq: ["$videoId", "$$videoId"],
+                    },
+                    {
+                      $eq: [
+                        "$likedBy",
+                        new mongoose.Types.ObjectId(req.user._id),
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+          as: "likes",
+        },
+      },
+      {
+        $addFields: {
+          isLiked: {
+            $gt: [{ $size: "$likes" }, 0],
+          },
+        },
+      },
+      {
+        $project: {
+          likes: 0,
+        },
+      },
+    ]);
+    console.log("videoData====", videoData);
+    return res
+      .status(200)
+      .json(
+        new ApiResponse(200, videoData[0], "Video detail fetches successfully")
+      );
+  } catch (error) {
+    return res
+      .status(500)
+      .json(
+        new ApiError(
+          500,
+          error?.message || "Internal server error while fetching video"
+        )
+      );
+  }
+});
+
 const updateVideo = asyncHandler(async (req, res) => {
   try {
     const { title, description, videoId } = req.body;
@@ -282,11 +355,127 @@ const addVideoInPlaylist = asyncHandler(async (req, res) => {
     .status(200)
     .json(new ApiResponse(200, updatedPlaylist, "Video add successfully"));
 });
+const getUserPlaylist = asyncHandler(async (req, res) => {
+  // check session
+  // match _id in the playlist owner and get all
+  try {
+    // find 1 way ======
+    const userPlaylist = await Playlist.aggregate([
+      {
+        $match: {
+          owner: new mongoose.Types.ObjectId(req.user?._id),
+        },
+      },
+    ]);
+
+    // find 2 way =======
+    //   const userPlaylist = await Playlist.aggregate([
+    //   {
+    //     $match: {
+    //       owner: {
+    //         $in: [new mongoose.Types.ObjectId(req.user?._id)],
+    //       },
+    //     },
+    //   },
+    // ]);
+
+    // find 3rd way =========
+    // const userPlaylist = await Playlist.find({
+    //   owner: new mongoose.Types.ObjectId(req.user?._id),
+    // });
+
+    console.log("userPlaylist=====", userPlaylist);
+    return res
+      .status(200)
+      .json(
+        new ApiResponse(200, userPlaylist, "Playlist fetched successfully")
+      );
+  } catch (error) {
+    return res
+      .status(500)
+      .json(new ApiError(500, "Internal server error while fetching playlist"));
+  }
+});
+const getPlaylistDetail = asyncHandler(async (req, res) => {
+  try {
+    const { playlistId } = req.params;
+    const playlistDetail = await Playlist.aggregate([
+      {
+        $match: {
+          _id: new mongoose.Types.ObjectId(playlistId),
+        },
+      },
+      {
+        $lookup: {
+          from: "videos",
+          localField: "video",
+          foreignField: "_id",
+          as: "video",
+        },
+      },
+    ]);
+    console.log(playlistDetail);
+
+    if (!playlistDetail?.length) {
+      return res.status(404).json(new ApiError(404, "Playlist not found"));
+    }
+    return res
+      .status(200)
+      .json(
+        new ApiResponse(200, playlistDetail[0], "Playlist fetched successfully")
+      );
+  } catch (error) {
+    return res
+      .status(500)
+      .json(
+        new ApiError(
+          500,
+          error?.message || "Internal server error while fetching playlist"
+        )
+      );
+  }
+});
+const likeVideo = asyncHandler(async (req, res) => {
+  const { videoId } = req.body;
+  if (!videoId) {
+    return res.status(400).json(new ApiError(400, "VideoId is required"));
+  }
+  const existingLike = await VideoLike.findOne({
+    videoId: videoId,
+    likedBy: req.user?._id,
+  });
+  if (existingLike) {
+    await VideoLike.findByIdAndDelete(existingLike?._id);
+    return res
+      .status(200)
+      .json(
+        new ApiResponse(
+          200,
+          { _id: existingLike?._id },
+          "Video Unlike successfully"
+        )
+      );
+  }
+  const videoLikes = await VideoLike.create({
+    videoId,
+    likedBy: req.user?._id,
+  });
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(200, { _id: videoLikes?._id }, "Video like successfully")
+    );
+});
+
 export {
   createVideo,
   getVideoFeed,
+  getSingleVideo,
   updateVideo,
   deleteVideo,
   createPlaylist,
   addVideoInPlaylist,
+  getUserPlaylist,
+  getPlaylistDetail,
+  likeVideo,
 };

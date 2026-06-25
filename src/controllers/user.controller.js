@@ -270,24 +270,73 @@ const changeCurrentPassword = asyncHandler(async (req, res) => {
     .status(200)
     .json(new ApiResponse(200, {}, "Password change successfully"));
 });
+// const getProfile = asyncHandler(async (req, res) => {
+//   try {
+//     const userId = req.query.userId || req?.user?._id;
+//     console.log(req, "=======", userId);
+//     const currentUser = await User.findById(userId).select("-password");
+//     if (currentUser?.deletedAt !== null) {
+//       return res.status(404).json(404, "Unauthorized User!");
+//     }
+//     return res
+//       .status(200)
+//       .json(
+//         new ApiResponse(200, { currentUser }, "Profile fetched successfully")
+//       );
+//   } catch (error) {
+//     return res
+//       .status(404)
+//       .json(new ApiError(404, error?.message || "User not found"));
+//   }
+// });
 const getProfile = asyncHandler(async (req, res) => {
-  try {
-    const userId = req.query.userId || req?.user?._id;
-    console.log(req, "=======", userId);
-    const currentUser = await User.findById(userId).select("-password");
-    if (currentUser?.deletedAt !== null) {
-      return res.status(404).json(404, "Unauthorized User!");
-    }
-    return res
-      .status(200)
-      .json(
-        new ApiResponse(200, { currentUser }, "Profile fetched successfully")
-      );
-  } catch (error) {
-    return res
-      .status(404)
-      .json(new ApiError(404, error?.message || "User not found"));
+  const userId = req.query.userId || req.user?._id;
+
+  const currentUser = await User.aggregate([
+    {
+      $match: {
+        _id: new mongoose.Types.ObjectId(userId),
+      },
+    },
+    {
+      $lookup: {
+        from: "playlists",
+        localField: "_id",
+        foreignField: "owner",
+        as: "playlists",
+        pipeline: [
+          {
+            $project: {
+              video: 0,
+              owner: 0,
+            },
+          },
+          // {
+          //   $lookup: {
+          //     from: "videos",
+          //     localField: "video",
+          //     foreignField: "_id",
+          //     as: "videos",
+          //   },
+          // },
+        ],
+      },
+    },
+    {
+      $project: {
+        password: 0,
+        refreshToken: 0,
+      },
+    },
+  ]);
+
+  if (!currentUser.length) {
+    return res.status(404).json(new ApiError(404, "User not found"));
   }
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, currentUser[0], "Profile fetched successfully"));
 });
 const updateUser = asyncHandler(async (req, res) => {
   try {
