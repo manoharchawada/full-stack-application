@@ -165,5 +165,37 @@ const getParentComments = asyncHandler(async (req, res) => {
       );
   }
 });
+const deleteReplies = async (parentId) => {
+  const replies = await Comment.find({ parentId });
 
-export { createComment, getParentComments };
+  for (const reply of replies) {
+    await deleteReplies(reply._id);
+    await reply.deleteOne();
+  }
+};
+const deleteComment = asyncHandler(async (req, res) => {
+  const { commentId } = req.params;
+
+  if (!commentId || !mongoose.Types.ObjectId.isValid(commentId)) {
+    return res.status(400).json(new ApiError(400, "Invalid comment id"));
+  }
+
+  const comment = await Comment.findById(commentId);
+
+  if (!comment) {
+    return res.status(404).json(new ApiError(404, "Comment not found"));
+  }
+
+  if (!comment.owner.equals(req.user._id)) {
+    return res.status(403).json(new ApiError(403, "Unauthorized user"));
+  }
+
+  await deleteReplies(commentId);
+
+  await comment.deleteOne();
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, {}, "Comment deleted successfully"));
+});
+export { createComment, getParentComments, deleteComment };
