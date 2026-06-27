@@ -165,15 +165,27 @@ const getSingleVideo = asyncHandler(async (req, res) => {
         },
       },
       {
+        $lookup: {
+          from: "videolikes",
+          localField: "_id",
+          foreignField: "videoId",
+          as: "totalLikes",
+        },
+      },
+      {
         $addFields: {
           isLiked: {
             $gt: [{ $size: "$likes" }, 0],
+          },
+          totalLikeCount: {
+            $size: "$totalLikes",
           },
         },
       },
       {
         $project: {
           likes: 0,
+          // totalLikes: 0,
         },
       },
     ]);
