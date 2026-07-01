@@ -105,11 +105,50 @@ const getVideoFeed = asyncHandler(async (req, res) => {
   const limit = parseInt(req.query.limit, 10) || 10;
   const offset = parseInt(req.query.offset);
   try {
-    const videoFeed = await Video.find({})
-      .sort({ createdAt: -1 })
-      .limit(req.query.limit)
-      .skip(req.query.offset)
-      .select("-owner");
+    // const videoFeed = await Video.find({})
+    //   .sort({ createdAt: -1 })
+    //   .limit(req.query.limit)
+    //   .skip(req.query.offset);
+    // .select("-owner");
+    const videoFeed = await Video.aggregate([
+      {
+        $sort: {
+          createdAt: -1,
+        },
+      },
+      {
+        $skip: parseInt(req?.query?.offset),
+      },
+      {
+        $limit: parseInt(req?.query?.limit),
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "owner",
+          foreignField: "_id",
+          as: "owner",
+          pipeline: [
+            {
+              $project: {
+                fullName: 1,
+                username: 1,
+                avatar: 1,
+              },
+            },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          owner: {
+            $first: "$owner",
+          },
+        },
+      },
+    ]);
+    console.log("videoFeed", videoFeed);
+
     if (!videoFeed?.length) {
       return res.status(404).json(new ApiError(404, "Video data not found"));
     }
@@ -134,6 +173,14 @@ const getSingleVideo = asyncHandler(async (req, res) => {
       {
         $match: {
           _id: new mongoose.Types.ObjectId(videoId),
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "owner",
+          foreignField: "_id",
+          as: "owner",
         },
       },
       {
@@ -179,6 +226,9 @@ const getSingleVideo = asyncHandler(async (req, res) => {
           },
           totalLikeCount: {
             $size: "$totalLikes",
+          },
+          owner: {
+            $first: "$owner",
           },
         },
       },
